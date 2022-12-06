@@ -4,11 +4,9 @@
 #define CHARS_TO_FIND 14
 
 int found[26];
-
 int total_since_clear = 0;
 
 void clear() {
-    printf("clear!\n");
     for (int i = 0; i < 26; i++) {
         found[i] = 0;
     }
@@ -30,17 +28,13 @@ int readFile(char *fileName) {
         c = (char)i;
         index = c - 'a';
 
-        printf("%c %lu %d\n", c, ftell(file)/sizeof(char), found[index]);
-
         if(found[index]) {
-            unsigned long go_back_to = (found[index] ) * sizeof(char);
-            printf("\tSkipping to %lu\n", go_back_to);
+            unsigned long go_back_to = found[index] * sizeof(char);
 
             clear();
             fseek(file, go_back_to, SEEK_SET);
         } else {
             found[index] = ftell(file)/sizeof(char);
-            printf("\tsetting %d to %d\n", index, found[index]);
             total_since_clear++;
         }
 
