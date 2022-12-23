@@ -6,3 +6,7 @@ day8
 lib/
 out/
 .idea/
+day13.js
+node_modules/
+package-lock.json
+package.json
