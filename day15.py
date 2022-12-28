@@ -79,8 +79,8 @@ def part2(filename, coords):
 
     sc = SparkSession.builder.master("local[8]").appName('Day15').getOrCreate().sparkContext
     result = sc.parallelize(range(max_y)).map(process_row).filter(lambda x: x is not None).take(1)
-    print(result)
     return result
+
 if __name__ == "__main__":
     filename = sys.argv[1]
     lines = read_input(filename)

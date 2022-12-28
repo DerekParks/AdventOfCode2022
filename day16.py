@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+
+import sys
+import re
+import heapq
+from more_itertools import set_partitions
+from itertools import permutations, product
+from collections import defaultdict
+
+def read_input(filename):
+    with open(filename, 'r') as f:
+        return f.read().splitlines()
+
+class Valve:
+    def __init__(self, name, rate):
+        self.rate = rate
+        self.name = name
+        self.neigh = []
+
+    def add_neigh(self, neigh):
+        self.neigh.append(neigh)
+
+    def __repr__(self):
+        #return f"{self.name}({self.rate} {[n.name for n in self.neigh]})"
+        return f"{self.name}"
+
+    def __lt__(self, other):
+        return self.rate < other.rate
+
+def build_graph(inlines):
+    graph = {}
+
+    for line in inlines:
+        name, rate = re.findall(r'Valve ([A-Z][A-Z]).+=(\d+);', line)[0]
+        graph[name] = Valve(name, int(rate))
+
+    for line in inlines:
+        name, neighs = re.findall(r'Valve ([A-Z][A-Z]).+valves?\s([A-Z,\s]+)$', line)[0]
+        neighs = neighs.split(',')
+        graph[name].neigh = sorted([graph[n.strip()] for n in neighs], key=lambda x: x.rate, reverse=False)
+
+    return graph
+
+def shortest_path(f, t):
+    heap = []
+    seen = set()
+    heapq.heappush(heap, (0, (f,)))
+
+    while heap:
+        time, path = heapq.heappop(heap)
+        node = path[-1]
+        if node == t:
+            return time, path
+        for neigh in node.neigh:
+            if neigh not in seen:
+                seen.add(neigh)
+                heapq.heappush(heap, (time + 1, path + (neigh,)))
+
+def build_shortest_paths(graph):
+    print(graph)
+    shortest_paths = {}
+    for f in graph.values():
+        f.paths = {}
+        f.path_to = {}
+        for t in graph.values():
+            if f == t:
+                continue
+            if t.rate == 0:
+                continue
+            if (t, f) in shortest_paths:
+                f.paths[t], f.path_to[t] = shortest_paths[(t, f)]
+                f.path_to[t] = tuple(reversed(f.path_to[t]))
+            else:
+                f.paths[t], f.path_to[t] = shortest_path(f, t)
+            shortest_paths[(f, t)] = (f.paths[t], f.path_to[t])
+    return shortest_paths
+
+class TraversalState:
+    def __init__(self, graph, max_time, path=(), opened=frozenset(), released=[]):
+        self.path = path
+        self.opened = opened
+        self.released = released
+        self.graph = graph
+        self.max_time = max_time
+
+    def time(self):
+        return len(self.path)
+
+    def _update_released(self):
+        self.released.append(sum([p.rate for p in self.opened]))
+
+    def _update(self, node, opened):
+        new_opened = self.opened.union((node,)) if opened else self.opened
+        result = TraversalState(self.graph, self.max_time, self.path + (node,), new_opened, self.released.copy())
+        result._update_released()
+        return result
+
+    def move_to(self, node):
+        return self._update(node, False)
+
+    def open(self):
+        return self._update(self.node(), True)
+
+    def no_op(self):
+        return self._update(self.node(), False)
+
+    def node(self):
+        return self.path[-1]
+
+    def path_name(self):
+        return [n.name for n in self.path]
+
+    def __repr__(self):
+        return f"{' ' * self.time()} {self.time()} {self.path_name()} {self.opened} {self.released} {sum(self.released)}"
+
+    def __lt__(self, other):
+        if self.time() == other.time():
+            return self.total_released() >= other.total_released()
+        else:
+            return self.time() < other.time()
+
+    def total_released(self):
+        return sum(self.released)
+
+    def to_see(self):
+        return (self.opened, self.time(), self.total_released())
+
+class MultiTraversalState:
+    def __init__(self, graph, max_time, time=0, paths=((),), opened=frozenset(), released=[]):
+        self.paths = paths
+        self.opened = opened
+        self.released = released
+        self.graph = graph
+        self.max_time = max_time
+        self.current_time = time
+
+    def time(self):
+        #assert self.current_time == len(self.paths[0])
+        return self.current_time
+
+    def tick(self):
+        self.current_time += 1
+        self._update_released()
+        return self
+
+    def _update_released(self):
+        print(self.opened)
+        self.released.append(sum([p.rate for p in self.opened]))
+
+    def _update(self, move_index, node, opened):
+        print(move_index, node, opened, self.paths)
+        new_opened = self.opened.union((node,)) if opened else self.opened
+        new_paths = tuple(p if i != move_index else p + (node,) for i, p in enumerate(self.paths))
+
+        result = MultiTraversalState(
+            self.graph,
+            self.max_time,
+            self.current_time,
+            new_paths,
+            new_opened,
+            self.released.copy())
+        return result
+
+    def move_to(self, node, move_index=0):
+        return self._update(move_index, node, False)
+
+    def open(self, move_index=0):
+        return self._update(move_index, self.node(move_index), True)
+
+    def no_op(self, move_index=0):
+        return self._update(move_index, self.node(move_index), False)
+
+    def node(self, move_index=0):
+        return self.paths[move_index][-1]
+
+    def path_name(self, move_index=0):
+        return [n.name for n in self.paths[move_index]]
+
+    def __repr__(self):
+        return f"{' ' * self.time()} {self.time()} {self.opened} {self.released} {sum(self.released)}"
+
+    def __lt__(self, other):
+        if self.time() == other.time():
+            return self.total_released() >= other.total_released()
+        else:
+            return self.time() < other.time()
+
+    def total_released(self):
+        return sum(self.released)
+
+    def to_see(self):
+        return (self.opened, self.time(), self.total_released())
+
+    # def merge(self, other):
+    #     assert len(self.paths) == len(other.paths)
+    #     assert self.released == other.released
+
+    #     time_out = max(self.time(), other.time())
+
+    #     paths_out = []
+    #     for i in range(len(self.paths)):
+    #         if len(self.paths[i]) >= len(other.paths[i]):
+    #             paths_out.append(self.paths[i])
+    #         else:
+    #             paths_out.append(other.paths[i])
+    #     opened_out = self.opened.union(other.opened)
+
+        return MultiTraversalState(self.graph, self.max_time, time_out, tuple(paths_out), opened_out, self.released)
+
+optimal_traversal = ["AA", "DD", "CC", "BB", "AA", "II", "JJ", "II", "AA", "DD", "EE", "FF", "GG", "HH", "GG", "FF", "EE", "DD", "CC"]
+time_step =     [  1,    2,    3 ,   4,    5,    6,    7,    8,    9,   10,   11,   12,   13,   14,   15,   16,   17,   18,   19,   20,   21,   22,   23,   24,   25,   26,   27,   28,   29,   30]
+released  =     [  0,    0,    20,  20,   20,   33,   33,   33,   33,   54,   54,   54,   54,   54,   54,   54,   54,   76,   76,   76,   76,   79,   79,   79,   81,   81,   81,   81,   81,   81]
+optimal_locs  = ["AA", "DD", "DD", "CC", "BB", "BB", "AA", "II", "JJ", "JJ", "II", "AA", "DD", "EE", "FF", "GG", "HH", "HH", "GG", "FF", "EE", "EE", "DD", "CC", "CC", "CC", "CC", "CC", "CC", "CC"]
+optimal_locs2  = ["AA", "DD", "DD", "AA", "BB", "BB", "AA", "II", "JJ", "JJ", "II", "AA", "DD", "EE", "FF", "GG", "HH", "HH", "GG", "FF", "EE", "EE", "DD", "CC", "CC", "CC", "CC", "CC", "CC", "CC"]
+
+force_optimal_path = False
+
+def fts4(graph, n_movers=1, max_time=30):
+    heap = []
+    seen = set()
+
+    max_release = 0
+    max_state = None
+    count = 0
+
+    open_ables = [n for n in graph.values() if n.rate != 0]
+
+    def add(state):
+        state_to_see = state.to_see()
+        if state_to_see not in seen:
+            heapq.heappush(heap, state)
+            seen.add(state_to_see)
+        else:
+            print("Already Seen", state.paths, state_to_see)
+
+    def check_max(state):
+        nonlocal max_release, max_state
+        released = state.total_released()
+        if released > max_release:
+            max_release = released
+            max_state = state
+
+    add(MultiTraversalState(graph=graph, max_time=max_time).move_to(graph['AA']).tick())
+
+    while heap:
+        state = heapq.heappop(heap)
+
+        time = state.time()
+        count += 1
+
+        path_name = state.path_name()
+        if force_optimal_path:
+            if path_name == optimal_locs2:
+                print(f"{' ' * time}  Optimal path {state.paths}")
+                return state
+
+            if path_name != optimal_locs2[:len(path_name)]:
+                print(f"{' ' * time}  Not on happy path {path_name} {optimal_locs[:len(path_name)]}")
+                continue
+
+        print(f"{' ' * time} {time} {state.to_see()} {state.paths}")
+
+        unopened = [n for n in open_ables if n not in state.opened]
+
+        if len(unopened) == 0 or time > max_time:
+            while state.time() < max_time:
+                state = state.no_op().tick()
+
+            released = state.total_released()
+            if released > max_release:
+                max_release = released
+                max_state = state
+            print(f"{' ' * time} {time} Max time {state.paths}")
+            continue
+
+        print(f"{' ' * time} {time} {state.paths} -> {unopened}")
+        for moves_for_movers in set_partitions(unopened, n_movers):
+            moves_foreach_mover = [[] * n_movers]
+
+            for i in range(n_movers):
+                for node in moves_for_movers[i]:
+                    current = state.node(i)
+                    if node not in current.paths:
+                        continue
+
+                    state_next = state
+
+                    cost = current.paths[node] + 1
+
+                    next_time = time + cost
+                    if next_time > max_time:
+                        while state_next.time() < max_time:
+                            state_next = state_next.no_op().tick()
+                        released = state_next.total_released()
+                        if released > max_release:
+                            max_release = released
+                            max_state = state_next
+                        continue
+
+                    print(f"{current} -> {node} {cost} {next_time} {current.path_to[node][1:]}")
+                    # for node_on_path in current.path_to[node][1:]:
+                    #     state_next = state_next.move_to(node_on_path).tick()
+
+                    # state_next = state_next.open().tick()
+                    moves_foreach_mover[i].append(current.path_to[node][1:])
+
+            for m1 in range(n_movers):
+                for m2 in range(n_movers):
+                    moves1 = moves_foreach_mover[m1]
+                    moves2 = moves_foreach_mover[m2]
+                    state_next = state
+                    if m1 == m2:
+                        for moves in moves1:
+                            for node_on_path in moves:
+                                print("moves:", m1, node_on_path)
+                                state_next = state_next.move_to(node_on_path, m1).tick()
+                            state_next = state_next.open(m1).tick()
+                            add(state_next)
+                    else:
+                        len1 = len(moves1)
+                        len2 = len(moves2)
+                        for i in range(max(len1+1, len2+1)):
+                            if i < len1:
+                                state_next = state_next.move_to(moves1[i], m1)
+                            if i == len1:
+                                state_next = state_next.open(m1)
+                            if i < len2:
+                                state_next = state_next.move_to(moves1[i], m2)
+                            if i == len2:
+                                state_next = state_next.open(m2)
+                            state_next = state_next.tick()
+                        add(state_next)
+
+    print(f"count: {count} {max_release}")
+    return max_state
+
+
+def fts3(graph, max_time=30):
+    heap = []
+    seen = set()
+
+    max_release = 0
+    max_state = None
+    count = 0
+
+    open_ables = [n for n in graph.values() if n.rate != 0]
+
+    def add(state):
+        state_to_see = state.to_see()
+        if state_to_see not in seen:
+            heapq.heappush(heap, state)
+            seen.add(state_to_see)
+        else:
+            print("Already Seen", state.path, state_to_see)
+
+    add(TraversalState(graph=graph, max_time=max_time).move_to(graph['AA']))
+
+    while heap:
+        state = heapq.heappop(heap)
+        current = state.node()
+        time = state.time()
+        count += 1
+
+        path_name = state.path_name()
+        if force_optimal_path:
+            if path_name == optimal_locs2:
+                print(f"{' ' * time}  Optimal path {state.path}")
+                return state
+
+            if path_name != optimal_locs2[:len(path_name)]:
+                print(f"{' ' * time}  Not on happy path {path_name} {optimal_locs[:len(path_name)]}")
+                continue
+
+        print(f"{' ' * time} {time} {state.to_see()} {state.path}")
+
+        unopened = [n for n in open_ables if n not in state.opened]
+
+        if len(unopened) == 0 or time > max_time:
+            while state.time() < max_time:
+                state = state.no_op()
+
+            released = state.total_released()
+            if released > max_release:
+                max_release = released
+                max_state = state
+            print(f"{' ' * time} {time} Max time {state.path}")
+            continue
+
+        print(f"{' ' * time} {time} {current} -> {unopened}")
+        for node in unopened:
+            if node not in current.paths:
+                continue
+
+            state_next = state
+
+            cost = current.paths[node] + 1
+
+            next_time = time + cost
+            if next_time > max_time:
+                while state_next.time() < max_time:
+                    state_next = state_next.no_op()
+                released = state_next.total_released()
+                if released > max_release:
+                    max_release = released
+                    max_state = state_next
+                continue
+
+            print(f"{current} -> {node} {cost} {next_time} {current.path_to[node][1:]}")
+            for node_on_path in current.path_to[node][1:]:
+                state_next = state_next.move_to(node_on_path)
+
+            add(state_next.open())
+
+    print(f"count: {count} {max_release}")
+    return max_state
+
+def part1(graph):
+    state = fts4(graph, 1, 30)
+    #state = fts3(graph, 30)
+
+    if state:
+        print(state)
+        print(state.released)
+        print(sum(state.released))
+        print(state.paths)
+
+if __name__ == "__main__":
+    inlines = read_input(sys.argv[1])
+    graph = build_graph(inlines)
+    build_shortest_paths(graph)
+
+    #print([(p.name, p.neigh) for p in graph.values()])
+    #print([(p.name, p.rate, p.paths) for p in graph.values()])
+
+    part1(graph)
