@@ -3,10 +3,14 @@
 import sys
 import re
 import heapq
-from more_itertools import set_partitions
-from itertools import permutations, product
+#from more_itertools import set_partitions
+from itertools import permutations, product, combinations
 from collections import defaultdict
 import copy
+from dask.distributed import Client, as_completed
+import os
+import pickle
+from pickle import UnpicklingError
 
 def read_input(filename):
     with open(filename, 'r') as f:
@@ -155,7 +159,8 @@ def fts3(graph, max_time=30):
             heapq.heappush(heap, state)
             seen.add(state_to_see)
         else:
-            print("Already Seen", state.path, state_to_see)
+            pass
+            #print("Already Seen", state.path, state_to_see)
 
     add(TraversalState(graph=graph, max_time=max_time).move_to(graph['AA']))
 
@@ -176,7 +181,7 @@ def fts3(graph, max_time=30):
                 continue
 
         unopened = [n for n in open_ables if n not in state.opened]
-        print(f"{' ' * time} {time} {state.to_see()} {state.path} {current} -> {unopened}")
+        #print(f"{' ' * time} {time} {state.to_see()} {state.path} {current} -> {unopened}")
 
         if len(unopened) == 0 or time > max_time:
             while state.time() < max_time:
@@ -186,7 +191,7 @@ def fts3(graph, max_time=30):
             if released > max_release:
                 max_release = released
                 max_state = state
-            print(f"{' ' * time} {time} Max time {state.path}")
+            # print(f"{' ' * time} {time} Max time {state.path}")
             continue
 
         for node in unopened:
@@ -207,13 +212,13 @@ def fts3(graph, max_time=30):
                     max_state = state_next
                 continue
 
-            print(f"{current} -> {node} {cost} {next_time} {current.path_to[node][1:]}")
+            #print(f"{current} -> {node} {cost} {next_time} {current.path_to[node][1:]}")
             for node_on_path in current.path_to[node][1:]:
                 state_next = state_next.move_to(node_on_path)
 
             add(state_next.open())
 
-    print(f"count: {count} {max_release}")
+    #print(f"count: {count} {max_release}")
     return max_state
 
 def part1(graph):
@@ -227,8 +232,37 @@ def part1(graph):
         print(sum(state.released))
         print(state.path)
 
+
+def check_file_cache(file_name, part):
+    retry = 0
+    while retry < 3:
+        try:
+            temp = pickle.load(open(file_name, 'rb'))
+            if part in temp:
+                print(f"Using cached {file_name} for {part}")
+                return temp[part]
+        except (IOError, EOFError, ValueError):
+            return None
+        except UnpicklingError:
+            retry += 1
+    return None
+
 def part2(graph):
+    if os.path.exists('part2.json'):
+        os.remove('part2.json')
+
     build_shortest_paths(graph)
+
+    def partition_generator(nodes):
+        nodes_set = set(nodes)
+        for i in range(len(nodes)//2-1, len(nodes)//2):
+            print(f"Partition size {i}")
+            for partition in combinations(nodes, i):
+                partition = set(partition)
+                other_half = nodes_set.difference(partition)
+                yield partition, other_half
+            
+
 
     def make_subgraph(graph, nodes):
         subgraph = copy.deepcopy(graph)
@@ -241,6 +275,44 @@ def part2(graph):
         return subgraph
 
     max_release = 0
+
+    def run_part(parted):
+        cached = check_file_cache('part2.json', parted)
+        if cached:
+            return cached
+
+        subgraph = make_subgraph(graph, parted)
+    
+        if not build_shortest_paths(subgraph):
+            result = 0
+        else:
+            state = fts3(subgraph, 26)
+            if state:
+                result = state.total_released()
+            else:
+                result = 0
+        return result
+
+    def run_both_parts(t1, t2):
+        result1 = run_part(t1)
+        result2 = run_part(t2)
+        return {t1: result1, t2: result2}
+
+    futures = []
+
+    count = 0
+    for parted in partition_generator(graph.keys()):
+        count += 1
+        if count % 1000000 == 0:
+            print(count)
+    print("Total Partitions:", count)
+
+    sys.exit(0)
+
+    client = Client(n_workers=10, threads_per_worker=2, memory_limit='30GB') 
+
+    
+
     for parted in set_partitions(graph.keys(), 2):
         if 'AA' not in parted[0]:
             parted[0] += ('AA',)
@@ -249,30 +321,27 @@ def part2(graph):
 
         if len(parted[0]) == 1 or len(parted[1]) == 1:
             continue
+        
+        futures.append(client.submit(run_both_parts, tuple(parted[0]), tuple(parted[1])))
 
-        subgraph0 = make_subgraph(graph, parted[0])
-        subgraph1 = make_subgraph(graph, parted[1])
-
-        if not build_shortest_paths(subgraph0):
-            continue
-        if not build_shortest_paths(subgraph1):
-            continue
-
-        print("here")
-
-        state0 = fts3(subgraph0, 26)
-        state1 = fts3(subgraph1, 26)
-
-        if state0 and state1:
-            released = state0.total_released() + state1.total_released()
+    for batch in as_completed(futures, with_results=True).batches():
+        print("Batch:", len(batch))
+        cached_results = {}
+        for future, result in batch:
+            cached_results.update(result)
+            released = sum(result.values())
             if released > max_release:
                 max_release = released
-                print(parted)
                 print(released)
-                print(state0.path)
-                print(state1.path)
 
-    print(max_release)
+        if os.path.exists('part2.json'):
+            cache_prev = pickle.load(open('part2.json', 'rb'))            
+            cached_results.update(cache_prev)
+
+
+        pickle.dump(cached_results, open('part2.json', 'wb'))
+
+    print("max_release", max_release)
     # state = fts3(graph, 26)
     # if state:
     #     print(state)
@@ -287,5 +356,5 @@ if __name__ == "__main__":
     #print([(p.name, p.neigh) for p in graph.values()])
     #print([(p.name, p.rate, p.paths) for p in graph.values()])
 
-    #part1(graph)
-    part2(graph)
+    part1(graph)
+    #part2(graph)
