@@ -3,14 +3,7 @@
 import sys
 import re
 import heapq
-#from more_itertools import set_partitions
-from itertools import permutations, product, combinations
-from collections import defaultdict
 import copy
-from dask.distributed import Client, as_completed
-import os
-import pickle
-from pickle import UnpicklingError
 
 def read_input(filename):
     with open(filename, 'r') as f:
@@ -134,58 +127,6 @@ class TraversalState:
     def to_see(self):
         return (self.opened, self.time(), self.total_released())
 
-
-class TraversalState:
-    def __init__(self, graph, max_time, path=(), opened=frozenset(), released=[]):
-        self.path = path
-        self.opened = opened
-        self.released = released
-        self.graph = graph
-        self.max_time = max_time
-
-    def time(self):
-        return len(self.path)
-
-    def _update_released(self):
-        self.released.append(sum([p.rate for p in self.opened]))
-
-    def _update(self, node, opened):
-        new_opened = self.opened.union((node,)) if opened else self.opened
-        result = TraversalState(self.graph, self.max_time, self.path + (node,), new_opened, self.released.copy())
-        result._update_released()
-        return result
-
-    def move_to(self, node):
-        return self._update(node, False)
-
-    def open(self):
-        return self._update(self.node(), True)
-
-    def no_op(self):
-        return self._update(self.node(), False)
-
-    def node(self):
-        return self.path[-1]
-
-    def path_name(self):
-        return [n.name for n in self.path]
-
-    def __repr__(self):
-        return f"{' ' * self.time()} {self.time()} {self.path_name()} {self.opened} {self.released} {sum(self.released)}"
-
-    def __lt__(self, other):
-        if self.time() == other.time():
-            return self.total_released() >= other.total_released()
-        else:
-            return self.time() < other.time()
-
-    def total_released(self):
-        return sum(self.released)
-
-    def to_see(self):
-        return (self.opened, self.time(), self.total_released())
-
-
 optimal_traversal = ["AA", "DD", "CC", "BB", "AA", "II", "JJ", "II", "AA", "DD", "EE", "FF", "GG", "HH", "GG", "FF", "EE", "DD", "CC"]
 time_step =     [  1,    2,    3 ,   4,    5,    6,    7,    8,    9,   10,   11,   12,   13,   14,   15,   16,   17,   18,   19,   20,   21,   22,   23,   24,   25,   26,   27,   28,   29,   30]
 released  =     [  0,    0,    20,  20,   20,   33,   33,   33,   33,   54,   54,   54,   54,   54,   54,   54,   54,   76,   76,   76,   76,   79,   79,   79,   81,   81,   81,   81,   81,   81]
@@ -283,13 +224,33 @@ def part1(graph):
         print(sum(state.released))
         print(state.path)
 
+def part2(graph):
+    build_shortest_paths(graph)
+
+    state = fts3(graph, 26)
+
+    assert state
+    print(state)
+    print(state.released)
+    print(sum(state.released))
+    print(state.path)
+
+    graph_elephant = copy.deepcopy(graph)
+    for v in state.opened:
+        graph_elephant[v.name].rate = 0
+
+    stat_el = fts3(graph_elephant, 26)
+    assert stat_el
+    print(stat_el)
+    print(stat_el.released)
+    print(sum(stat_el.released))
+    print(stat_el.path)
+    print(sum(stat_el.released) + sum(state.released))
+
 
 if __name__ == "__main__":
     inlines = read_input(sys.argv[1])
     graph = build_graph(inlines)
 
-    #print([(p.name, p.neigh) for p in graph.values()])
-    #print([(p.name, p.rate, p.paths) for p in graph.values()])
-
-    part1(graph)
-    #part2(graph)
+    #part1(graph)
+    part2(graph)
